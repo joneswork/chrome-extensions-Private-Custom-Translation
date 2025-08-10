@@ -1,0 +1,82 @@
+<!-- 文件名: popup.html -->
+<!-- v1.8.1: 精简UI，新增调试模式 -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>设置</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; width: 320px; padding: 15px; background-color: #f4f5f7; }
+        h1 { font-size: 16px; color: #172b4d; margin-top: 0; }
+        label { display: block; margin-bottom: 5px; font-size: 14px; color: #5e6c84; }
+        input[type="text"], input[type="password"], select { width: 100%; padding: 8px; border: 2px solid #dfe1e6; border-radius: 4px; box-sizing: border-box; margin-bottom: 10px; font-size: 14px; background-color: white; }
+        input:focus, select:focus { border-color: #4c9aff; outline: none; }
+        button { width: 100%; padding: 10px; background-color: #0052cc; color: white; border: none; border-radius: 4px; font-size: 14px; cursor: pointer; transition: background-color 0.2s; margin-top: 5px; }
+        button:hover { background-color: #0065ff; }
+        #clear-cache-button { background-color: #ae2a19; margin-top: 10px;}
+        #clear-cache-button:hover { background-color: #c9372c; }
+        #status { margin-top: 10px; font-size: 12px; color: #0065ff; text-align: center; height: 15px; }
+        .setting-group { margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid #dfe1e6; }
+        .setting-group:last-child { border-bottom: none; }
+        .api-settings { display: none; margin-top: 10px; border: 1px solid #dfe1e6; padding: 10px; border-radius: 4px; background-color: #fff; }
+        /* 开关样式 */
+        .switch-container { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+        .switch { position: relative; display: inline-block; width: 50px; height: 24px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 24px; }
+        .slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: #0052cc; }
+        input:checked + .slider:before { transform: translateX(26px); }
+    </style>
+</head>
+<body>
+    <h1>翻译设置</h1>
+
+    <div class="setting-group">
+        <div class="switch-container">
+            <label for="engine-switch">使用 Gemini API</label>
+            <label class="switch">
+                <input type="checkbox" id="engine-switch">
+                <span class="slider"></span>
+            </label>
+        </div>
+        <small>关闭则使用默认的 Google 翻译。</small>
+    </div>
+
+    <div id="gemini-settings" class="api-settings">
+        <label for="gemini-key">Gemini API 密钥:</label>
+        <input type="password" id="gemini-key" placeholder="在此输入您的密钥">
+    </div>
+
+    <div class="setting-group">
+        <label for="language-select">选择目标语言:</label>
+        <select id="language-select">
+            <option value="zh-CN">简体中文</option>
+            <option value="en">English</option>
+            <option value="ja">日本語</option>
+            <option value="ko">한국어</option>
+            <option value="fr">Français</option>
+            <option value="de">Deutsch</option>
+            <option value="ru">Русский</option>
+            <option value="es">Español</option>
+        </select>
+    </div>
+
+    <div class="setting-group">
+        <div class="switch-container">
+            <label for="debug-switch">调试模式</label>
+            <label class="switch">
+                <input type="checkbox" id="debug-switch">
+                <span class="slider"></span>
+            </label>
+        </div>
+        <small>开启后将在开发者控制台输出详细日志。</small>
+    </div>
+
+    <button id="save-button">保存设置</button>
+    <button id="clear-cache-button">清除翻译缓存</button>
+    <div id="status"></div>
+
+    <script src="popup.js"></script>
+</body>
+</html>

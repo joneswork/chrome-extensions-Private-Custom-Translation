@@ -1,0 +1,133 @@
+/* 文件名: styles.css */
+/* v1.9.1: 优化YouTube字幕覆盖样式 */
+
+/* 划词翻译弹出图标的样式 */
+.custom-translator-popup {
+    position: fixed;
+    top: var(--popup-top, '0px');
+    left: var(--popup-left, '0px');
+    z-index: 2147483647;
+    background-color: white;
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 30px;
+    min-height: 30px;
+}
+
+/* 划词翻译按钮 */
+.custom-translator-button {
+    background-color: #008B8B;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    font-size: 14px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+.custom-translator-button:hover {
+    background-color: #0065ff;
+}
+
+/* 划词翻译结果的样式 */
+.custom-translator-popup .translated-content {
+    padding: 10px 12px;
+    font-size: 14px;
+    color: #333;
+    max-width: 350px;
+    text-align: left;
+    line-height: 1.5;
+}
+
+/* 加载动画 */
+.loader {
+    border: 3px solid #f3f3f3;
+    border-top: 3px solid #008B8B;
+    border-radius: 50%;
+    width: 20px;
+    height: 20px;
+    animation: spin 1s linear infinite;
+    margin: 8px;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* 包裹翻译内容的span，用于双语对照 */
+.custom-translator-wrapper {}
+
+/* 双语对照翻译的样式 */
+.translated-text {
+    color: #008B8B;
+    font-weight: normal;
+    margin-left: 5px;
+    display: block;
+    margin-top: 8px;
+}
+
+/* --- YouTube 字幕翻译按钮样式 --- */
+.yt-translate-button {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 7px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.8;
+    transition: opacity 0.2s;
+    vertical-align: top;
+}
+
+.yt-translate-button:hover {
+    opacity: 1;
+}
+
+.yt-translate-button.active {
+    background-color: rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+}
+
+.yt-translate-icon {
+    width: 24px;
+    height: 24px;
+    fill: #fff;
+}
+
+/* --- 【新样式】当字幕翻译激活时，修改YouTube原生字幕样式 --- */
+.youtube-translation-active .ytp-caption-segment {
+    background-color: rgba(8, 8, 8, 0.75) !important;
+    padding: 4px 10px !important;
+    border-radius: 4px !important;
+    width: auto !important;
+    max-width: 80vw !important; /* 允许字幕宽度达到视窗的80% */
+    text-align: center !important;
+    display: inline-block !important;
+    color: #FFFFFF !important; /* 将翻译后的字幕颜色改为白色，以获得更好的对比度 */
+    font-style: normal !important;
+    white-space: normal !important; /* 允许长句子自动换行 */
+    line-height: 1.4 !important;
+}
+
+
+/* 页面内通知样式 */
+.custom-translator-notification {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: #172b4d;
+    color: white;
+    padding: 12px 20px;
+    border-radius: 6px;
+    z-index: 2147483647;
+    font-size: 14px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    opacity: 1;
+    transition: opacity 0.5s ease-out;
+}
