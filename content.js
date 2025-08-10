@@ -545,7 +545,7 @@ async function translateWithGoogle(text) {
 
 async function translateWithGemini(text) {
     if (!settings.geminiApiKey) { throw new Error("Gemini API key not set."); }
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${settings.geminiApiKey}`;
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${settings.geminiApiKey}`;
     const finalPrompt = `Translate the following text to ${settings.targetLanguage}. Maintain the original line breaks and structure. Do not add any extra explanations or text, only provide the direct translation.\n\nOriginal Text:\n${text}\n\nTranslated Text:`;
     const payload = {
         "contents": [{ "parts": [{ "text": finalPrompt }] }],
