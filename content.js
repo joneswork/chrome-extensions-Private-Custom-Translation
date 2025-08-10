@@ -1,5 +1,5 @@
 // 文件名: content.js
-// v2.6.2 (优化: YouTube字幕翻译通过智能分句提升上下文准确性)
+// v2.6.3 (修复: 优化段落查找逻辑，避免在 x.com 上重复翻译)
 
 let settings = {
     engine: 'google',
@@ -401,7 +401,7 @@ function stopYoutubeSubtitleObserver() {
     }
 }
 
-// --- 翻译与内容还原 (保持不变) ---
+// --- 翻译与内容还原 ---
 function restoreOriginalContent() {
     document.body.dataset.translationState = 'original';
     const translatedElements = document.querySelectorAll('[data-is-translated="true"]');
@@ -441,33 +441,65 @@ async function translatePageByParagraphs(rootElement) {
     }
 }
 
+/**
+ * [已修复] 查找并返回页面中适合翻译的段落元素。
+ * 通过使用临时属性标记已入队的元素，解决了在同一次处理中父子元素被同时选中而导致的重复翻译问题。
+ * @param {HTMLElement} root - 开始搜索的根元素。
+ * @returns {HTMLElement[]} - 一个包含待翻译元素的数组。
+ */
 function findParagraphs(root) {
     const elements = root.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, th, td, blockquote, div, span, [data-testid="tweetText"]');
     const paragraphs = [];
+    const tempAttrName = 'data-translator-queued';
+
     elements.forEach(el => {
-        if (el.offsetParent === null || el.dataset.isTranslated || el.closest('[data-is-translated="true"], a, button, [role="button"], [role="link"], script, style, noscript, .custom-translator-wrapper')) {
+        // 如果元素或其祖先已被翻译或已在本次处理队列中，则跳过。
+        // 这是防止在同一批次中重复翻译父/子元素的核心修复。
+        if (el.closest(`[data-is-translated="true"], [${tempAttrName}]`)) {
             return;
         }
+
+        // 如果元素的某个后代已被翻译，则跳过此元素，以避免包裹一个已翻译的内容。
         if (el.querySelector('[data-is-translated="true"]')) {
             return;
         }
+
+        // 跳过不可见元素、链接、按钮等。
+        if (el.offsetParent === null || el.closest('a, button, [role="button"], [role="link"], script, style, noscript, .custom-translator-wrapper')) {
+            return;
+        }
+
+        // 跳过没有有效文本内容的元素。
         const text = el.innerText.trim();
         if (!text || text.length < 5) {
             return;
         }
+
+        // 跳过那些作为其他块级元素容器的元素。
         let hasBlockChild = false;
-        for(let child of el.children) {
+        for (let child of el.children) {
             const display = window.getComputedStyle(child).display;
-            if(display === 'block' || display === 'flex' || display === 'grid') {
+            if (display === 'block' || display === 'flex' || display === 'grid') {
                 hasBlockChild = true;
                 break;
             }
         }
-        if (hasBlockChild) return;
+        if (hasBlockChild) {
+            return;
+        }
+        
         paragraphs.push(el);
+        el.setAttribute(tempAttrName, "true");
     });
+
+    // 从我们标记的元素中清理临时属性。
+    paragraphs.forEach(el => {
+        el.removeAttribute(tempAttrName);
+    });
+
     return paragraphs;
 }
+
 
 function appendTranslation(element, translatedText) {
     if (element.dataset.isTranslated || !translatedText) return;
