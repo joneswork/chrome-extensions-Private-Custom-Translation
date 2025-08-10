@@ -1,5 +1,5 @@
 // 文件名: content.js
-// v2.6.3 (修复: 优化段落查找逻辑，避免在 x.com 上重复翻译)
+// v2.9.1 (修复: 增加后台翻译缓冲时间，解决因请求频繁导致的翻译失败问题)
 
 let settings = {
     engine: 'google',
@@ -23,6 +23,9 @@ const DEBUG_PREFIX = "[翻译插件调试]";
 
         // 初始化YouTube功能
         initYouTubeSubtitleFeature();
+        // 监视YouTube页面导航
+        initYouTubeNavigationWatcher();
+
     } catch (e) {
         console.error(DEBUG_PREFIX, "初始化失败:", e);
     }
@@ -38,6 +41,7 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
     if (changes.engine || changes.targetLanguage) {
         translationCache.clear();
         youtubeSubtitleCache.clear(); // 同时清除YouTube字幕缓存
+        fullSubtitleTrack = []; // 清除完整轨道
         if (settings.debugMode) console.log(DEBUG_PREFIX, "引擎或语言变更, 缓存已清除。");
     }
 });
@@ -72,6 +76,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     } else if (request.action === "clearCache") {
         translationCache.clear();
         youtubeSubtitleCache.clear();
+        fullSubtitleTrack = [];
         if (settings.debugMode) console.log(DEBUG_PREFIX, "收到清除缓存指令。");
         sendResponse({status: "缓存已清除"});
     }
@@ -192,25 +197,79 @@ function stopObservers() {
 }
 
 
-// --- YOUTUBE 字幕翻译新功能 ---
+// --- YOUTUBE 字幕翻译新功能 (v2.9.1 重构) ---
 
 let youtubeSubtitleCache = new Map();
+let fullSubtitleTrack = []; // 格式: {startTime, endTime, originalSentence, segments, translatedSentence}
 let isYoutubeTranslationActive = false;
+let isTranslatingSubtitles = false; // 防止并发翻译的标志
+let isFullTranslationComplete = false; // 标记完整翻译是否已完成
 let youtubeObserver = null;
 let translateButton = null;
+let videoElement = null;
+let lastYoutubeUrl = "";
+
+// [新增] 监视YouTube页面导航
+function initYouTubeNavigationWatcher() {
+    if (!window.location.hostname.includes("youtube.com")) {
+        return;
+    }
+    lastYoutubeUrl = window.location.href;
+
+    const navigationObserver = new MutationObserver(() => {
+        if (window.location.href !== lastYoutubeUrl) {
+            lastYoutubeUrl = window.location.href;
+            if (settings.debugMode) console.log(DEBUG_PREFIX, "YouTube URL 变更:", lastYoutubeUrl);
+
+            // 仅在 /watch 页面（视频播放页）上重置
+            if (window.location.pathname.includes("/watch")) {
+                if (settings.debugMode) console.log(DEBUG_PREFIX, "检测到新视频页面，正在重置翻译状态...");
+                resetYouTubeTranslationState();
+                initYouTubeSubtitleFeature(); // 为新页面重新初始化
+            }
+        }
+    });
+
+    navigationObserver.observe(document.body, { childList: true, subtree: true });
+}
+
+// [新增] 重置所有YouTube翻译相关的状态
+function resetYouTubeTranslationState() {
+    stopYoutubeSubtitleObserver();
+    isTranslatingSubtitles = false;
+
+    youtubeSubtitleCache.clear();
+    fullSubtitleTrack = [];
+    isYoutubeTranslationActive = false;
+    isFullTranslationComplete = false;
+
+    const oldButton = document.querySelector('.yt-translate-button');
+    if (oldButton) {
+        oldButton.remove();
+    }
+    translateButton = null;
+    videoElement = null;
+}
+
 
 function initYouTubeSubtitleFeature() {
-    if (window.location.hostname.includes("youtube.com") && window.location.pathname.includes("watch")) {
-        if (settings.debugMode) console.log(DEBUG_PREFIX, "YouTube 观看页面已检测到，启动字幕翻译功能。");
-        const playerObserver = new MutationObserver((mutations, obs) => {
-            const controls = document.querySelector('.ytp-right-controls');
-            if (controls && !document.querySelector('.yt-translate-button')) {
-                injectTranslateButton(controls);
-                obs.disconnect();
-            }
-        });
-        playerObserver.observe(document.body, { childList: true, subtree: true });
-    }
+    if (!window.location.pathname.includes("/watch")) return;
+    if (settings.debugMode) console.log(DEBUG_PREFIX, "初始化YouTube字幕功能...");
+
+    const playerObserver = new MutationObserver((mutations, obs) => {
+        const controls = document.querySelector('.ytp-right-controls');
+        if (controls && !document.querySelector('.yt-translate-button')) {
+            injectTranslateButton(controls);
+        }
+        if (!videoElement) {
+            videoElement = document.querySelector('video');
+        }
+        if (document.querySelector('.yt-translate-button') && videoElement) {
+            obs.disconnect();
+            if (settings.debugMode) console.log(DEBUG_PREFIX, "播放器控件和翻译按钮已准备就绪。");
+        }
+    });
+    playerObserver.observe(document.body, { childList: true, subtree: true });
 }
 
 function injectTranslateButton(controls) {
@@ -241,21 +300,19 @@ async function handleYoutubeTranslateClick() {
     }
 
     if (isYoutubeTranslationActive) {
-        if (youtubeSubtitleCache.size > 0) {
-            startYoutubeSubtitleObserver();
-        } else {
+        if (fullSubtitleTrack.length === 0) {
             const { url } = await chrome.runtime.sendMessage({ action: 'getYoutubeSubtitleUrl' });
             if (url) {
-                showNotification("开始预翻译字幕，请稍候...");
                 await fetchAndProcessSubtitles(url);
-                startYoutubeSubtitleObserver();
             } else {
-                showNotification("错误：未找到字幕文件。请先在视频中开启英文字幕。");
+                showNotification("错误：未找到字幕文件。请先在视频中开启原始语言的字幕。");
                 isYoutubeTranslationActive = false;
                 translateButton.classList.remove('active');
-                 if (playerContainer) playerContainer.classList.remove('youtube-translation-active');
+                if (playerContainer) playerContainer.classList.remove('youtube-translation-active');
+                return;
             }
         }
+        startYoutubeSubtitleObserver();
     } else {
         stopYoutubeSubtitleObserver();
     }
@@ -272,25 +329,30 @@ async function fetchAndProcessSubtitles(url) {
             return;
         }
 
-        // 1. 智能聚合为句子
         const sentenceGroups = [];
         let currentSentence = "";
         let currentSegments = [];
+        let sentenceStartTime = -1;
 
         for (const event of data.events) {
             if (event.segs) {
                 const textSegment = event.segs.map(seg => seg.utf8).join('').trim();
-
-                // YouTube 使用一个简单的换行段来分隔句子/意图
+                if (sentenceStartTime === -1 && event.tStartMs) {
+                    sentenceStartTime = event.tStartMs;
+                }
                 if (textSegment === "") {
                     if (currentSentence.trim()) {
                         sentenceGroups.push({
+                            startTime: sentenceStartTime,
+                            endTime: event.tStartMs,
                             originalSentence: currentSentence.trim(),
-                            segments: [...currentSegments]
+                            segments: [...currentSegments],
+                            translatedSentence: null
                         });
                     }
                     currentSentence = "";
                     currentSegments = [];
+                    sentenceStartTime = -1;
                 } else {
                     const cleanedSegment = textSegment.replace(/\n/g, ' ').trim();
                     if (cleanedSegment) {
@@ -300,55 +362,111 @@ async function fetchAndProcessSubtitles(url) {
                 }
             }
         }
-        // 添加最后一个句子（如果存在）
         if (currentSentence.trim()) {
+            const lastEvent = data.events[data.events.length - 1];
             sentenceGroups.push({
+                startTime: sentenceStartTime,
+                endTime: lastEvent.tStartMs + (lastEvent.dDurationMs || 3000),
                 originalSentence: currentSentence.trim(),
-                segments: [...currentSegments]
+                segments: [...currentSegments],
+                translatedSentence: null
             });
         }
 
-        if (sentenceGroups.length === 0) {
-            showNotification("未在字幕文件中找到有效文本。");
-            return;
-        }
+        fullSubtitleTrack = sentenceGroups;
+        isFullTranslationComplete = false;
+        if (settings.debugMode) console.log(DEBUG_PREFIX, `字幕解析完成，共 ${fullSubtitleTrack.length} 个句子。`);
 
-        const sentencesToTranslate = sentenceGroups.map(g => g.originalSentence);
-
-        // 2. 分块翻译句子
-        const CHUNK_SIZE = settings.engine === 'gemini' ? 50 : 10;
-        let allTranslatedSentences = [];
-
-        for (let i = 0; i < sentencesToTranslate.length; i += CHUNK_SIZE) {
-            const chunk = sentencesToTranslate.slice(i, i + CHUNK_SIZE);
-            const translatedChunk = await translateChunk(chunk);
-            if (translatedChunk && translatedChunk.length === chunk.length) {
-                 allTranslatedSentences.push(...translatedChunk);
-            } else {
-                console.error(DEBUG_PREFIX, "一个字幕块翻译失败。", translatedChunk);
-                allTranslatedSentences.push(...chunk.map(() => "[翻译失败]"));
-            }
-            await new Promise(resolve => setTimeout(resolve, 1100)); // API 礼貌性延迟
-        }
-
-        // 3. 构建新的缓存
-        if (sentenceGroups.length === allTranslatedSentences.length) {
-            sentenceGroups.forEach((group, index) => {
-                const translatedSentence = allTranslatedSentences[index];
-                group.segments.forEach(segment => {
-                    youtubeSubtitleCache.set(segment, translatedSentence);
-                });
-            });
-            showNotification("字幕翻译完成！");
-            if (settings.debugMode) console.log(DEBUG_PREFIX, `YouTube字幕缓存已构建，共 ${youtubeSubtitleCache.size} 条。`);
-        } else {
-            console.error(DEBUG_PREFIX, "翻译结果数量与原文数量不匹配。");
-            showNotification("字幕翻译出错：结果不匹配。");
-        }
+        // 开始翻译流程
+        startContinuousTranslation();
 
     } catch (error) {
         console.error("处理YouTube字幕失败:", error);
-        showNotification(`字幕翻译失败: ${error.message}`);
+        showNotification(`字幕处理失败: ${error.message}`);
+    }
+}
+
+async function startContinuousTranslation() {
+    if (isTranslatingSubtitles) return;
+
+    try {
+        isTranslatingSubtitles = true;
+
+        // 1. 优先翻译当前时间点后2分钟的内容
+        const currentTime = videoElement ? videoElement.currentTime : 0;
+        const currentTimeMs = currentTime * 1000;
+        const lookaheadMs = 120000; // 2分钟
+
+        const initialBatch = fullSubtitleTrack.filter(sentence =>
+            sentence.translatedSentence === null &&
+            sentence.startTime >= currentTimeMs &&
+            sentence.startTime <= (currentTimeMs + lookaheadMs)
+        );
+
+        if (initialBatch.length > 0) {
+            if (settings.debugMode) console.log(DEBUG_PREFIX, `开始即时翻译 ${initialBatch.length} 条字幕 (未来2分钟)`);
+            await translateSentenceArray(initialBatch);
+        }
+
+        // 2. 在后台翻译所有剩余的字幕
+        if (settings.debugMode) console.log(DEBUG_PREFIX, "开始在后台进行完整的字幕翻译...");
+
+        let untranslatedSentences = fullSubtitleTrack.filter(s => s.translatedSentence === null);
+        while(untranslatedSentences.length > 0) {
+            if (!isYoutubeTranslationActive) { // 如果在后台翻译过程中用户关闭了功能，则中止
+                if (settings.debugMode) console.log(DEBUG_PREFIX, "翻译功能已关闭，中止后台翻译。");
+                return;
+            }
+            const BATCH_SIZE = 50; // 每次后台翻译50句
+            const backgroundBatch = untranslatedSentences.slice(0, BATCH_SIZE);
+
+            if (settings.debugMode) console.log(DEBUG_PREFIX, `后台翻译批次: ${backgroundBatch.length} 条`);
+            await translateSentenceArray(backgroundBatch);
+
+            await new Promise(resolve => setTimeout(resolve, 1500)); // 在大批次之间等待
+
+            untranslatedSentences = fullSubtitleTrack.filter(s => s.translatedSentence === null);
+        }
+
+        isFullTranslationComplete = true;
+        if (settings.debugMode) console.log(DEBUG_PREFIX, "所有字幕已在后台翻译完成，现在将使用最完整的上下文。");
+
+    } catch (error) {
+        console.error(DEBUG_PREFIX, "持续翻译流程出错:", error);
+        showNotification("字幕翻译流程出错。");
+    } finally {
+        isTranslatingSubtitles = false;
+    }
+}
+
+async function translateSentenceArray(sentences) {
+    if (sentences.length === 0) return;
+
+    const originalTexts = sentences.map(s => s.originalSentence);
+    const CHUNK_SIZE = settings.engine === 'gemini' ? 50 : 10;
+
+    for (let i = 0; i < originalTexts.length; i += CHUNK_SIZE) {
+        // [修复] 在每个小块请求之间增加延时，防止触发API限制
+        if (i > 0) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+
+        const textChunk = originalTexts.slice(i, i + CHUNK_SIZE);
+        const sentenceChunk = sentences.slice(i, i + CHUNK_SIZE);
+
+        const translatedChunk = await translateChunk(textChunk);
+
+        if (translatedChunk && translatedChunk.length === textChunk.length) {
+            sentenceChunk.forEach((sentence, index) => {
+                const translatedText = translatedChunk[index];
+                sentence.translatedSentence = translatedText;
+                sentence.segments.forEach(segment => {
+                    youtubeSubtitleCache.set(segment, translatedText);
+                });
+            });
+        } else {
+            console.error(DEBUG_PREFIX, "一个字幕块翻译失败。", translatedChunk);
+        }
     }
 }
 
@@ -441,41 +559,25 @@ async function translatePageByParagraphs(rootElement) {
     }
 }
 
-/**
- * [已修复] 查找并返回页面中适合翻译的段落元素。
- * 通过使用临时属性标记已入队的元素，解决了在同一次处理中父子元素被同时选中而导致的重复翻译问题。
- * @param {HTMLElement} root - 开始搜索的根元素。
- * @returns {HTMLElement[]} - 一个包含待翻译元素的数组。
- */
 function findParagraphs(root) {
     const elements = root.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, th, td, blockquote, div, span, [data-testid="tweetText"]');
     const paragraphs = [];
     const tempAttrName = 'data-translator-queued';
 
     elements.forEach(el => {
-        // 如果元素或其祖先已被翻译或已在本次处理队列中，则跳过。
-        // 这是防止在同一批次中重复翻译父/子元素的核心修复。
         if (el.closest(`[data-is-translated="true"], [${tempAttrName}]`)) {
             return;
         }
-
-        // 如果元素的某个后代已被翻译，则跳过此元素，以避免包裹一个已翻译的内容。
         if (el.querySelector('[data-is-translated="true"]')) {
             return;
         }
-
-        // 跳过不可见元素、链接、按钮等。
         if (el.offsetParent === null || el.closest('a, button, [role="button"], [role="link"], script, style, noscript, .custom-translator-wrapper')) {
             return;
         }
-
-        // 跳过没有有效文本内容的元素。
         const text = el.innerText.trim();
         if (!text || text.length < 5) {
             return;
         }
-
-        // 跳过那些作为其他块级元素容器的元素。
         let hasBlockChild = false;
         for (let child of el.children) {
             const display = window.getComputedStyle(child).display;
@@ -487,12 +589,11 @@ function findParagraphs(root) {
         if (hasBlockChild) {
             return;
         }
-        
+
         paragraphs.push(el);
         el.setAttribute(tempAttrName, "true");
     });
 
-    // 从我们标记的元素中清理临时属性。
     paragraphs.forEach(el => {
         el.removeAttribute(tempAttrName);
     });
@@ -511,7 +612,7 @@ function appendTranslation(element, translatedText) {
     element.appendChild(translationElement);
 }
 
-// --- 翻译API调用核心 (保持不变) ---
+// --- 翻译API调用核心 ---
 async function translateChunk(texts) {
     const BATCH_DELIMITER = '\n<br>\n';
     const joinedText = texts.join(BATCH_DELIMITER);
@@ -550,13 +651,12 @@ async function translateSingleText(text) {
     }
     if (result && !result.startsWith('翻译错误')) {
         translationCache.set(cacheKey, result);
-        // 持久化缓存
         chrome.storage.local.set({ 'translationCache': Object.fromEntries(translationCache) });
     }
     return result;
 }
 
-// --- 各个API的实现 (保持不变) ---
+// --- 各个API的实现 ---
 async function translateWithGoogle(text) {
     const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${settings.targetLanguage}&dt=t&q=${encodeURIComponent(text)}`;
     const response = await fetch(url);
@@ -611,7 +711,7 @@ async function translateWithGemini(text) {
     return data.candidates[0]?.content?.parts?.[0]?.text || "翻译失败";
 }
 
-// --- 通用函数 (保持不变) ---
+// --- 通用函数 ---
 function showNotification(message) {
     let notification = document.createElement('div');
     notification.className = 'custom-translator-notification';
@@ -622,7 +722,3 @@ function showNotification(message) {
         setTimeout(() => document.body.removeChild(notification), 500);
     }, 3000);
 }
-
-// --- 字幕翻译样式 ---
-const subtitleStyle = document.createElement('style');
-document.head.appendChild(subtitleStyle);
